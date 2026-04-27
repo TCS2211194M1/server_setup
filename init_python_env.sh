@@ -1,38 +1,61 @@
 #!/bin/bash
 set -e
 
-echo "=== Construyendo plantilla del ecosistema Docker + Python ==="
+# --- Configuración de Colores para el Script Bash ---
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
-# 1. Dependencias de Python
+echo -e "${BLUE}=== Iniciando Orquestador de Ecosistema (Regla de Oro) ===${NC}"
+
+# 1. Verificación e Instalación de Docker (Host)
+if ! command -v docker &> /dev/null; then
+    echo -e "${YELLOW}[!] Docker no detectado. Iniciando instalación en el host...${NC}"
+    sudo apt-get update && sudo apt-get install -y ca-certificates curl gnupg
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+    # Usamos el repo de 'noble' por estabilidad en Ubuntu 25.10
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    sudo apt-get update
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    sudo usermod -aG docker $USER
+    echo -e "${GREEN}[OK] Motor de Docker instalado.${NC}"
+else
+    echo -e "${GREEN}[OK] Docker ya está presente en el sistema operativo base.${NC}"
+fi
+
+# 2. Generación de Archivos del Entorno (Aislamiento)
+echo -e "${BLUE}=== Generando archivos de configuración para Python ===${NC}"
+
+# requirements.txt
 cat << 'EOF' > requirements.txt
 fastapi
 uvicorn
+numpy
 EOF
 
-# 2. El Plano del Contenedor (Dockerfile)
+# Dockerfile
 cat << 'EOF' > Dockerfile
 FROM python:3.11-slim
-
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
 EXPOSE 8000
-
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 EOF
 
-# 3. El Orquestador (docker-compose.yml)
+# docker-compose.yml
 cat << 'EOF' > docker-compose.yml
 services:
   python_core:
@@ -48,71 +71,43 @@ services:
       - TZ=America/Mexico_City
 EOF
 
-# 4. El punto de entrada (main.py) con logs a color
+# main.py (Con debugging de colores profesional)
 cat << 'EOF' > main.py
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import os
 from datetime import datetime
 
-class Colors:
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    WARNING = '\033[93m'
-    RED = '\033[91m'
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
+class C:
+    HEADER, BLUE, GREEN, WARN, RED, RESET = '\033[95m', '\033[94m', '\033[92m', '\033[93m', '\033[91m', '\033[0m'
 
-def debug_print(color, level, message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.BOLD}{color}[{timestamp}] [{level}]{Colors.RESET} {message}", flush=True)
-
-DATA_DIR = "/app/data"
+def d_print(color, level, msg):
+    print(f"{color}[{datetime.now().strftime('%H:%M:%S')}] [{level}]{C.RESET} {msg}", flush=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    debug_print(Colors.HEADER, "SISTEMA", "Iniciando motor de FastAPI...")
-    debug_print(Colors.BLUE, "CONFIG", f"Verificando enlace de datos (gcsfuse) en: {DATA_DIR}")
-    
-    if os.path.exists(DATA_DIR):
-        debug_print(Colors.GREEN, "OK", "Volumen detectado correctamente.")
-        if os.access(DATA_DIR, os.W_OK):
-            debug_print(Colors.GREEN, "OK", "Permisos de escritura confirmados.")
-        else:
-            debug_print(Colors.WARNING, "ALERTA", "Directorio es de solo lectura. Revisa gcsfuse.")
+    d_print(C.HEADER, "SISTEMA", "Iniciando motor de FastAPI...")
+    path = "/app/data"
+    if os.path.exists(path):
+        d_print(C.GREEN, "OK", f"GCS Bucket vinculado en {path}")
     else:
-        debug_print(Colors.RED, "ERROR", f"No se encontró {DATA_DIR}. El bucket no está montado.")
-    
+        d_print(C.RED, "ERROR", "Falta el punto de montaje /app/data")
     yield
-    debug_print(Colors.HEADER, "SISTEMA", "Deteniendo servicios de forma segura...")
+    d_print(C.HEADER, "SISTEMA", "Apagado seguro.")
 
-app = FastAPI(title="Servidor de Procesamiento", lifespan=lifespan)
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
-def estado_servidor():
-    debug_print(Colors.CYAN, "PETICIÓN", "Endpoint raíz (/) invocado.")
-    
-    archivos = []
-    gcs_status = "Desconectado"
-    
-    try:
-        if os.path.exists(DATA_DIR):
-            gcs_status = "Activo"
-            archivos = os.listdir(DATA_DIR)
-            debug_print(Colors.BLUE, "OP", f"Lectura exitosa. {len(archivos)} archivos en bucket.")
-        else:
-            debug_print(Colors.RED, "OP", "Fallo: Directorio inexistente.")
-    except Exception as e:
-        debug_print(Colors.RED, "ERROR", f"Fallo en I/O: {str(e)}")
-
-    return {
-        "status": "Contenedor Python en línea",
-        "bucket_gcs": gcs_status,
-        "archivos_detectados": len(archivos)
-    }
+def home():
+    d_print(C.BLUE, "INFO", "Petición HTTP recibida.")
+    return {"status": "Online", "mode": "Containerized"}
 EOF
 
-echo "=== ¡Archivos generados con éxito! ==="
-echo "Puedes iniciar la pila con: docker compose up -d --build"
+echo -e "${GREEN}=== ¡Entorno listo! ===${NC}"
+echo -e "${YELLOW}Ejecutando orquestación final...${NC}"
+
+# 3. Lanzar la pila
+docker compose up -d --build
+
+echo -e "${GREEN}Despliegue completado.${NC}"
+echo -e "Monitorea los logs con: ${BLUE}docker compose logs -f${NC}"
