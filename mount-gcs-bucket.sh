@@ -75,19 +75,17 @@ log "Escribiendo logs de depuración en: $LOG_FILE"
 # Vaciamos el log anterior
 > "$LOG_FILE"
 
-# Ejecutamos gcsfuse con parámetros optimizados para archivos pesados
+# Ejecutamos gcsfuse con parámetros actualizados para v3.9.0+
 gcsfuse \
     --key-file "$KEY_FILE" \
     --implicit-dirs \
-    --stat-cache-ttl 1m \
-    --type-cache-ttl 1m \
-    --dir-mode 0777 \
-    --file-mode 0777 \
-    -o allow-other \
+    --metadata-cache-ttl-secs 60 \
+    -o allow_other \
+    --uid 1000 \
+    --gid 1000 \
     --log-file "$LOG_FILE" \
     --log-format "text" \
-    --debug_gcs \
-    --debug_fs \
+    --log-severity TRACE \
     "$BUCKET_NAME" \
     "$MOUNT_POINT"
 
