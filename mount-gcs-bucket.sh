@@ -83,7 +83,7 @@ gcsfuse \
     --type-cache-ttl 1m \
     --dir-mode 0777 \
     --file-mode 0777 \
-    --allow-other \
+    -o allow-other \
     --log-file "$LOG_FILE" \
     --log-format "text" \
     --debug_gcs \
